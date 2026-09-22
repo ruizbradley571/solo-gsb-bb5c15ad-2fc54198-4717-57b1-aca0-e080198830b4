@@ -158,6 +158,42 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .conflict-item.no-geometry { cursor: default; }
 .conflict-item.no-geometry:hover { background: #fff; }
 
+/* ---------- 冲突协调集群 ---------- */
+.cluster-list { display: flex; flex-direction: column; gap: 10px; }
+.cluster-card {
+  border: 1px solid #e0e0e0;
+  border-left: 4px solid #1f3b57;
+  border-radius: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.cluster-card:hover { background: #f4f8fc; }
+.cluster-card.active {
+  background: #eaf1f8;
+  border-color: #1f3b57;
+  box-shadow: 0 0 0 1px #1f3b57;
+}
+.cluster-card h3 { margin: 0 0 6px; font-size: 14px; }
+.cluster-card .stats { font-size: 13px; color: #444; margin-bottom: 4px; }
+.cluster-card .tag {
+  display: inline-block;
+  background: #e8eef5;
+  color: #1f3b57;
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 12px;
+  margin: 0 4px 2px 0;
+}
+/* 关键区域（割点）独立样式：红色虚线框 + 警示色 */
+.cluster-card .tag.critical {
+  background: #fde8e8;
+  color: #b31b1b;
+  border: 1px dashed #c92a2a;
+  font-weight: 600;
+}
+.cluster-hint { font-size: 12px; color: #777; }
+.muted { color: #999; font-size: 12px; }
+
 /* ---------- 质量预检结果弹窗 ---------- */
 .modal {
   position: fixed;

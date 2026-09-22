@@ -2,6 +2,7 @@
 
 const pc = require('polygon-clipping');
 const { multiPolygonArea, centroidOfCoords } = require('./geo');
+const { buildClusters } = require('./clusters');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -260,6 +261,10 @@ function analyze(zones, options = {}) {
   const conflictCountByType = { spatial: 0, resource: 0, both: 0 };
   conflicts.forEach((c) => { conflictCountByType[c.conflictType] += 1; });
 
+  // 冲突协调集群：区域为节点、冲突为无向边（同对区域去重），
+  // 连通分量即集群，Tarjan 割点即关键区域（在冲突 id 最终确定后构建）
+  const clusters = buildClusters(conflicts);
+
   return {
     generatedAt: new Date().toISOString(),
     params: {
@@ -272,6 +277,7 @@ function analyze(zones, options = {}) {
     conflictCountByType,
     totalConflictAreaM2: Math.round(conflicts.reduce((s, c) => s + c.areaM2, 0) * 100) / 100,
     conflicts,
+    clusters,
   };
 }
 

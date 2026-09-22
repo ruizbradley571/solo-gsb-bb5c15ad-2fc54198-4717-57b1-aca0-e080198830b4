@@ -61,6 +61,14 @@
     <!-- 右侧：地图 + 结果 -->
     <section id="content">
       <div id="map"></div>
+      <section class="card" id="clusterCard">
+        <h2>冲突协调集群 <span id="clusterSummary" class="badge">未运行</span></h2>
+        <div class="row" id="clusterToolbar" hidden>
+          <button id="showAllBtn" class="small" type="button">恢复全量视图</button>
+          <span class="cluster-hint">已按选中集群过滤冲突列表与地图，关键区域以红色虚线高亮</span>
+        </div>
+        <div id="clusterList" class="cluster-list"><em>运行分析后在此展示冲突协调集群（至少两个区域经冲突相连）。</em></div>
+      </section>
       <section class="card" id="resultsCard">
         <h2>冲突结果 <span id="conflictSummary" class="badge">未运行</span></h2>
         <div class="row">

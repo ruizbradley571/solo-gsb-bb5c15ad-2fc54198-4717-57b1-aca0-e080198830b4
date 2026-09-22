@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
 const { analyze, normalizeZone } = require('./src/analysis');
+const { buildClusters } = require('./src/clusters');
 const { precheck, extractFeatures } = require('./src/quality');
 const store = require('./src/store');
 
@@ -136,6 +137,8 @@ app.post('/api/analyses', (req, res) => {
   if (!result || !Array.isArray(result.conflicts)) {
     return res.status(400).json({ error: '缺少有效的分析结果（result.conflicts）' });
   }
+  // 服务端以冲突清单为准重新生成集群摘要，保证保存的记录始终携带一致的集群数据
+  result.clusters = buildClusters(result.conflicts);
   const record = {
     id: crypto.randomUUID(),
     name: String(name || `分析 ${new Date().toLocaleString('zh-CN')}`),
@@ -157,6 +160,7 @@ app.get('/api/analyses', (req, res) => {
     conflictCount: result.conflictCount,
     conflictCountByType: result.conflictCountByType || null,
     totalConflictAreaM2: result.totalConflictAreaM2,
+    clusterCount: Array.isArray(result.clusters) ? result.clusters.length : null,
   }));
   res.json({ analyses: list });
 });
@@ -174,10 +178,17 @@ app.delete('/api/analyses/:id', (req, res) => {
   res.status(removed ? 204 : 404).end();
 });
 
-// 导出 GeoJSON 报告（相交区域 + 冲突类型 + 共享资源 + 建议）
+// 导出 GeoJSON 报告（相交区域 + 冲突类型 + 共享资源 + 建议 + 集群摘要）
 app.get('/api/analyses/:id/export', (req, res) => {
   const record = store.getAnalysis(req.params.id);
   if (!record) return res.status(404).json({ error: '分析不存在' });
+
+  // 旧记录可能没有 clusters 字段，导出时现场补算，保证报告始终携带集群摘要
+  const clusters = Array.isArray(record.result.clusters)
+    ? record.result.clusters
+    : buildClusters(record.result.conflicts);
+  const clusterOfConflict = new Map();
+  clusters.forEach((cl) => cl.conflictIds.forEach((cid) => clusterOfConflict.set(cid, cl.id)));
 
   // 纯资源冲突无空间相交几何，导出为 null geometry 的 Feature 以保留完整冲突清单
   const features = record.result.conflicts.map((c) => ({
@@ -186,6 +197,7 @@ app.get('/api/analyses/:id/export', (req, res) => {
     properties: {
       conflictId: c.id,
       conflictType: c.conflictType,
+      clusterId: clusterOfConflict.get(c.id) || null,
       zones: c.zones.map((z) => z.name).join(' ∩ '),
       zoneDetails: c.zones,
       sharedResources: c.sharedResources || [],
@@ -208,6 +220,18 @@ app.get('/api/analyses/:id/export', (req, res) => {
       conflictCount: record.result.conflictCount,
       conflictCountByType: record.result.conflictCountByType || null,
       totalConflictAreaM2: record.result.totalConflictAreaM2,
+      // 集群摘要：区域/冲突 ID、类型计数、累计重叠天数与关键区域
+      clusters: clusters.map((cl) => ({
+        id: cl.id,
+        zoneIds: cl.zoneIds,
+        zoneCount: cl.zoneCount,
+        edgeCount: cl.edgeCount,
+        conflictIds: cl.conflictIds,
+        conflictCount: cl.conflictCount,
+        conflictCountByType: cl.conflictCountByType,
+        totalOverlapDays: cl.totalOverlapDays,
+        criticalZoneIds: cl.criticalZoneIds,
+      })),
     },
     features,
   };
