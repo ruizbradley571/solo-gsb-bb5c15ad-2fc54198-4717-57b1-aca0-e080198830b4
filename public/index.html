@@ -61,6 +61,14 @@
     <!-- 右侧：地图 + 结果 -->
     <section id="content">
       <div id="map"></div>
+      <section class="card" id="clustersCard">
+        <div class="cluster-head">
+          <h2>冲突协调集群 <span id="clusterSummary" class="badge">未运行</span></h2>
+          <button id="resetClusterBtn" class="small" type="button" hidden>恢复全量视图</button>
+        </div>
+        <p class="cluster-hint">以区域为节点、冲突为无向边的连通分量；金色虚线描边的<span class="critical-legend">◆ 关键区域</span>为移除后会拆分集群的区域。点击卡片可按集群过滤冲突列表与地图。</p>
+        <div id="clusterList" class="cluster-list"><em>运行分析后在此展示协调集群（仅含两个及以上区域的连通分量）。</em></div>
+      </section>
       <section class="card" id="resultsCard">
         <h2>冲突结果 <span id="conflictSummary" class="badge">未运行</span></h2>
         <div class="row">
@@ -72,6 +80,7 @@
               <option value="both">空间+资源冲突</option>
             </select>
           </label>
+          <span id="clusterScope" class="cluster-scope" hidden></span>
         </div>
         <div id="conflictList" class="conflict-list"><em>运行分析后在此展示，按重叠面积降序排列。</em></div>
       </section>

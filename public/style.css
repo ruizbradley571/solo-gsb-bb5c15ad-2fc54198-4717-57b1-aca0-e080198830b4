@@ -158,6 +158,84 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .conflict-item.no-geometry { cursor: default; }
 .conflict-item.no-geometry:hover { background: #fff; }
 
+/* ---------- 冲突协调集群 ---------- */
+.cluster-head { display: flex; justify-content: space-between; align-items: center; }
+.cluster-head h2 { margin: 0; font-size: 15px; color: #1f3b57; }
+.cluster-hint { margin: 6px 0 10px; font-size: 12px; color: #777; }
+.critical-legend { color: #b36900; font-weight: bold; }
+
+.cluster-list { display: flex; flex-direction: column; gap: 8px; }
+.cluster-item {
+  border: 1px solid #d9e2ec;
+  border-left: 4px solid #1971c2;
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  background: #fbfdff;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.cluster-item:hover { background: #f0f6fc; }
+.cluster-item.active {
+  border-color: #f59f00;
+  border-left-color: #f59f00;
+  background: #fffaeb;
+  box-shadow: 0 0 0 1px #f59f00 inset;
+}
+.cluster-title { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cluster-title strong { font-size: 13.5px; color: #1f3b57; }
+.cluster-metric { font-size: 12px; color: #555; }
+.cluster-types { display: flex; gap: 6px; flex-wrap: wrap; margin: 5px 0; }
+.ct-tag {
+  font-size: 11px;
+  border-radius: 3px;
+  padding: 0 7px;
+  color: #fff;
+  background: #888;
+}
+.ct-tag.spatial { background: #d0000b; }
+.ct-tag.resource { background: #e8590c; }
+.ct-tag.both { background: #9c36b5; }
+.ct-tag.critical { background: #f59f00; }
+.ct-tag.none { background: #e9ecef; color: #777; }
+.cluster-zones { display: flex; gap: 5px; flex-wrap: wrap; }
+.cluster-zone {
+  font-size: 11.5px;
+  background: #eef3f8;
+  border: 1px solid #d9e2ec;
+  color: #334;
+  border-radius: 3px;
+  padding: 0 6px;
+}
+.cluster-zone.critical {
+  background: #fff4d6;
+  border-color: #f59f00;
+  color: #8a5200;
+  font-weight: bold;
+}
+.cluster-scope {
+  font-size: 12px;
+  color: #8a5200;
+  background: #fff4d6;
+  border: 1px solid #f5c14b;
+  border-radius: 4px;
+  padding: 2px 8px;
+}
+.tag.cluster-tag {
+  background: #e7f0fb;
+  color: #18588f;
+  border: 1px solid #b6d4ef;
+}
+
+/* 关键区域地图菱形标记 */
+.critical-marker {
+  color: #f59f00;
+  font-size: 18px;
+  line-height: 18px;
+  text-align: center;
+  text-shadow: 0 0 3px #fff, 0 0 3px #fff;
+  pointer-events: none;
+}
+
 /* ---------- 质量预检结果弹窗 ---------- */
 .modal {
   position: fixed;

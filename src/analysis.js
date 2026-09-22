@@ -2,6 +2,7 @@
 
 const pc = require('polygon-clipping');
 const { multiPolygonArea, centroidOfCoords } = require('./geo');
+const { buildClusters } = require('./clusters');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -181,6 +182,7 @@ function analyze(zones, options = {}) {
     : null;
 
   // 过滤 + 预处理
+  let fallbackSeq = 0;
   const candidates = zones
     .map((z) => ({
       ...z,
@@ -190,7 +192,15 @@ function analyze(zones, options = {}) {
     }))
     .filter((z) => z.startMs !== null && z.endMs !== null)
     .filter((z) => !layerFilter || layerFilter.has(z.layer))
-    .filter((z) => (rangeStart === null || z.endMs > rangeStart) && (rangeEnd === null || z.startMs < rangeEnd));
+    .filter((z) => (rangeStart === null || z.endMs > rangeStart) && (rangeEnd === null || z.startMs < rangeEnd))
+    .map((z) => {
+      // 正常导入的区域均带 uuid；测试/直调场景缺失时给稳定回退 id，保证集群建图可引用节点
+      if (z.id === undefined || z.id === null || String(z.id) === '') {
+        z.id = `zone-${fallbackSeq + 1}`;
+        fallbackSeq += 1;
+      }
+      return z;
+    });
 
   const conflicts = [];
   for (let i = 0; i < candidates.length; i++) {
@@ -260,6 +270,9 @@ function analyze(zones, options = {}) {
   const conflictCountByType = { spatial: 0, resource: 0, both: 0 };
   conflicts.forEach((c) => { conflictCountByType[c.conflictType] += 1; });
 
+  // 冲突协调集群：区域为节点、冲突为无向边的连通分量（≥2 个区域），含 Tarjan 关键区域
+  const clusters = buildClusters(conflicts);
+
   return {
     generatedAt: new Date().toISOString(),
     params: {
@@ -270,6 +283,8 @@ function analyze(zones, options = {}) {
     zoneCount: candidates.length,
     conflictCount: conflicts.length,
     conflictCountByType,
+    clusterCount: clusters.length,
+    clusters,
     totalConflictAreaM2: Math.round(conflicts.reduce((s, c) => s + c.areaM2, 0) * 100) / 100,
     conflicts,
   };

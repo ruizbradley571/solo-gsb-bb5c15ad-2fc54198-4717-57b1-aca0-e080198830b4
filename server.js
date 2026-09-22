@@ -156,6 +156,7 @@ app.get('/api/analyses', (req, res) => {
     params,
     conflictCount: result.conflictCount,
     conflictCountByType: result.conflictCountByType || null,
+    clusterCount: result.clusterCount || (Array.isArray(result.clusters) ? result.clusters.length : 0),
     totalConflictAreaM2: result.totalConflictAreaM2,
   }));
   res.json({ analyses: list });
@@ -180,11 +181,18 @@ app.get('/api/analyses/:id/export', (req, res) => {
   if (!record) return res.status(404).json({ error: '分析不存在' });
 
   // 纯资源冲突无空间相交几何，导出为 null geometry 的 Feature 以保留完整冲突清单
+  // 每个 Feature 通过 clusterId 关联所属冲突协调集群（不在集群中的冲突为 null）
+  const clusterIndex = new Map();
+  (record.result.clusters || []).forEach((cl) => {
+    cl.conflictIds.forEach((cid) => clusterIndex.set(cid, cl.id));
+  });
+
   const features = record.result.conflicts.map((c) => ({
     type: 'Feature',
     geometry: c.geometry || null,
     properties: {
       conflictId: c.id,
+      clusterId: clusterIndex.get(c.id) || null,
       conflictType: c.conflictType,
       zones: c.zones.map((z) => z.name).join(' ∩ '),
       zoneDetails: c.zones,
@@ -207,6 +215,18 @@ app.get('/api/analyses/:id/export', (req, res) => {
       params: record.params,
       conflictCount: record.result.conflictCount,
       conflictCountByType: record.result.conflictCountByType || null,
+      clusterCount: record.result.clusters ? record.result.clusters.length : 0,
+      // 集群摘要：区域/冲突 ID、类型计数、累计重叠天数、关键区域
+      clusters: (record.result.clusters || []).map((cl) => ({
+        id: cl.id,
+        zoneIds: cl.zoneIds,
+        zones: cl.zones,
+        conflictIds: cl.conflictIds,
+        conflictCount: cl.conflictCount,
+        conflictCountByType: cl.conflictCountByType,
+        totalOverlapDays: cl.totalOverlapDays,
+        criticalZones: cl.criticalZones,
+      })),
       totalConflictAreaM2: record.result.totalConflictAreaM2,
     },
     features,

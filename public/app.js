@@ -9,6 +9,7 @@ const state = {
   lastResult: null,
   typeFilter: 'all',
   lastPrecheck: null,   // 最近一次质量预检结果
+  selectedClusterId: null, // 当前选中的冲突协调集群（null = 全量视图）
 };
 
 // 冲突类型展示配置
@@ -21,6 +22,10 @@ function typeLabel(t) {
   return (CONFLICT_TYPES[t] || {}).label || t || '空间冲突';
 }
 
+// 关键区域（集群割点）地图样式：金色虚线描边 + 菱形标记
+const CRITICAL_STYLE = { color: '#f59f00', weight: 3.5, dashArray: '8 4', fillColor: '#f59f00', fillOpacity: 0.22 };
+const DIMMED_STYLE = { color: '#bbb', weight: 1, fillColor: '#bbb', fillOpacity: 0.05 };
+
 // ---------- 地图 ----------
 const map = L.map('map').setView([31.23, 121.47], 13);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -30,6 +35,8 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 const zonesLayer = L.layerGroup().addTo(map);
 const conflictsLayer = L.layerGroup().addTo(map);
+const criticalMarkersLayer = L.layerGroup().addTo(map);
+const zoneGeoLayers = new Map(); // zoneId -> Leaflet 图层（便于按集群切换样式）
 
 const LAYER_COLORS = ['#2b8a3e', '#1971c2', '#e8590c', '#9c36b5', '#c2255c', '#0b7285', '#5f3dc4', '#a61e4d'];
 function layerColor(layer) {
@@ -71,6 +78,7 @@ function renderZones() {
   list.innerHTML = '';
 
   zonesLayer.clearLayers();
+  zoneGeoLayers.clear();
   const bounds = [];
 
   for (const z of state.zones) {
@@ -92,23 +100,36 @@ function renderZones() {
     li.appendChild(del);
     list.appendChild(li);
 
+    const popupHtml =
+      `<b>${escapeHtml(z.name)}</b><br>图层：${escapeHtml(z.layer)}<br>${fmtDate(z.start)} ~ ${fmtDate(z.end)}` +
+      ((z.resources || []).length ? `<br>资源：${z.resources.map(escapeHtml).join('、')}` : '');
     const geo = L.geoJSON(
       { type: 'Feature', geometry: z.geometry, properties: z },
       {
         style: { color: layerColor(z.layer), weight: 2, fillOpacity: 0.15 },
-        onEachFeature: (f, l) => l.bindPopup(
-          `<b>${escapeHtml(z.name)}</b><br>图层：${escapeHtml(z.layer)}<br>${fmtDate(z.start)} ~ ${fmtDate(z.end)}` +
-          ((z.resources || []).length ? `<br>资源：${z.resources.map(escapeHtml).join('、')}` : '')
-        ),
+        onEachFeature: (f, l) => l.bindPopup(popupHtml),
       }
     );
+    geo._defaultPopupHtml = popupHtml; // 恢复全量视图时还原弹窗内容
     geo.addTo(zonesLayer);
+    zoneGeoLayers.set(z.id, geo);
     try { bounds.push(geo.getBounds()); } catch { /* ignore */ }
   }
 
   if (bounds.length) {
     const b = bounds.reduce((acc, cur) => acc.extend(cur));
     map.fitBounds(b.pad(0.1));
+  }
+
+  // 区域库变化后重新套用集群样式（如集群中的区域被删除，退回全量视图）
+  if (state.selectedClusterId && state.lastResult) {
+    const stillExists = (state.lastResult.clusters || []).some((cl) => cl.id === state.selectedClusterId)
+      && clusterZoneIds(state.selectedClusterId).every((id) => zoneGeoLayers.has(id));
+    if (stillExists) {
+      applyClusterZoneStyles(state.selectedClusterId);
+    } else {
+      resetClusterView();
+    }
   }
 }
 
@@ -349,9 +370,148 @@ async function runAnalysis() {
   try {
     const result = await api('/api/analyze', { method: 'POST', body: JSON.stringify(body) });
     state.lastResult = result;
+    resetClusterView();
     renderConflicts(result);
   } catch (err) {
     alert(`分析失败：${err.message}`);
+  }
+}
+
+// ---------- 冲突协调集群 ----------
+
+function getCluster(id) {
+  return (state.lastResult?.clusters || []).find((cl) => cl.id === id) || null;
+}
+
+function clusterZoneIds(id) {
+  const cl = getCluster(id);
+  return cl ? cl.zoneIds : [];
+}
+
+function renderClusters(result) {
+  const box = $('clusterList');
+  box.innerHTML = '';
+  const clusters = result.clusters || [];
+  $('clusterSummary').textContent = clusters.length
+    ? `${clusters.length} 个集群 · ${result.conflictCount} 处冲突`
+    : result.conflicts.length
+      ? '0 个集群（冲突未形成多区域连通分量）'
+      : '0 个集群';
+
+  if (!clusters.length) {
+    box.innerHTML = '<em>本次分析没有形成含两个及以上区域的冲突集群。</em>';
+    return;
+  }
+
+  for (const cl of clusters) {
+    const card = document.createElement('div');
+    card.className = 'cluster-item' + (cl.id === state.selectedClusterId ? ' active' : '');
+    card.onclick = () => selectCluster(cl.id === state.selectedClusterId ? null : cl.id);
+
+    const t = cl.conflictCountByType || {};
+    const criticalSet = new Set(cl.criticalZones);
+    const zoneTags = cl.zones
+      .map((z) => `<span class="cluster-zone${criticalSet.has(z.id) ? ' critical' : ''}" title="${criticalSet.has(z.id) ? '关键区域：移除后集群将分裂' : ''}">${criticalSet.has(z.id) ? '◆ ' : ''}${escapeHtml(z.name)}</span>`)
+      .join(' ');
+    card.innerHTML = `
+      <div class="cluster-title">
+        <strong>${escapeHtml(cl.id.replace('cluster-', '集群 '))}</strong>
+        <span class="cluster-metric">${cl.conflictCount} 处冲突 · ${cl.zoneIds.length} 个区域 · 累计重叠 ${cl.totalOverlapDays} 天</span>
+      </div>
+      <div class="cluster-types">
+        <span class="ct-tag spatial">空间 ${t.spatial || 0}</span>
+        <span class="ct-tag resource">资源 ${t.resource || 0}</span>
+        <span class="ct-tag both">空间+资源 ${t.both || 0}</span>
+        ${cl.criticalZones.length ? `<span class="ct-tag critical">◆ 关键区域 ${cl.criticalZones.length}</span>` : '<span class="ct-tag none">无关键区域</span>'}
+      </div>
+      <div class="cluster-zones">${zoneTags}</div>`;
+    box.appendChild(card);
+  }
+}
+
+function selectCluster(id) {
+  state.selectedClusterId = id;
+  renderClusters(state.lastResult);
+  renderConflicts(state.lastResult);
+  if (id) {
+    applyClusterZoneStyles(id);
+    fitCluster(id);
+  } else {
+    resetClusterView();
+  }
+}
+
+function resetClusterView() {
+  state.selectedClusterId = null;
+  criticalMarkersLayer.clearLayers();
+  for (const [zoneId, geo] of zoneGeoLayers) {
+    const z = state.zones.find((zz) => zz.id === zoneId);
+    const color = z ? layerColor(z.layer) : '#666';
+    geo.setStyle({ color, weight: 2, fillColor: color, fillOpacity: 0.15, dashArray: null });
+    if (geo._defaultPopupHtml !== undefined) geo.setPopupContent(geo._defaultPopupHtml);
+  }
+  $('resetClusterBtn').hidden = true;
+  $('clusterScope').hidden = true;
+}
+
+/** 按集群过滤区域样式：集群内区域保留图层色并加粗，关键区域金色虚线，其余区域淡出 */
+function applyClusterZoneStyles(id) {
+  const cl = getCluster(id);
+  $('resetClusterBtn').hidden = !cl;
+  criticalMarkersLayer.clearLayers();
+  if (!cl) {
+    $('clusterScope').hidden = true;
+    return;
+  }
+  $('clusterScope').hidden = false;
+  $('clusterScope').textContent =
+    `已按 ${cl.id.replace('cluster-', '集群 ')} 过滤（${cl.conflictCount} 处冲突）`;
+
+  const memberIds = new Set(cl.zoneIds);
+  const criticalSet = new Set(cl.criticalZones);
+  for (const [zoneId, geo] of zoneGeoLayers) {
+    const z = state.zones.find((zz) => zz.id === zoneId);
+    const color = z ? layerColor(z.layer) : '#666';
+    if (criticalSet.has(zoneId)) {
+      geo.setStyle(CRITICAL_STYLE);
+      geo.setPopupContent(
+        `◆ <b>关键区域：${escapeHtml(z?.name || zoneId)}</b><br>移除该区域将导致「${cl.id.replace('cluster-', '集群 ')}」分裂` +
+        (z ? `<br>图层：${escapeHtml(z.layer)}<br>${fmtDate(z.start)} ~ ${fmtDate(z.end)}` : '')
+      );
+      addCriticalMarker(geo);
+    } else if (memberIds.has(zoneId)) {
+      geo.setStyle({ color, weight: 3, fillColor: color, fillOpacity: 0.2, dashArray: null });
+    } else {
+      geo.setStyle(DIMMED_STYLE);
+    }
+  }
+}
+
+/** 在关键区域质心放置金色菱形标记（使用区域几何质心，不依赖额外坐标字段） */
+function addCriticalMarker(geo) {
+  try {
+    const center = geo.getBounds().getCenter();
+    const icon = L.divIcon({
+      className: 'critical-marker',
+      html: '◆',
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+    });
+    L.marker(center, { icon, interactive: false, keyboard: false }).addTo(criticalMarkersLayer);
+  } catch { /* ignore */ }
+}
+
+/** 地图视角缩放到集群内区域（区域不在当前区域库时不调整视角） */
+function fitCluster(id) {
+  const cl = getCluster(id);
+  if (!cl) return;
+  const bounds = [];
+  for (const zoneId of cl.zoneIds) {
+    const geo = zoneGeoLayers.get(zoneId);
+    if (geo) { try { bounds.push(geo.getBounds()); } catch { /* ignore */ } }
+  }
+  if (bounds.length) {
+    map.fitBounds(bounds.reduce((acc, cur) => acc.extend(cur)).pad(0.15));
   }
 }
 
@@ -365,27 +525,49 @@ function renderConflicts(result) {
     `${result.conflictCount} 处冲突（空间 ${counts.spatial} / 资源 ${counts.resource} / 空间+资源 ${counts.both}）` +
     ` · 重叠面积共 ${fmtArea(result.totalConflictAreaM2)}`;
 
+  renderClusters(result);
+  const selectedCluster = state.selectedClusterId ? getCluster(state.selectedClusterId) : null;
+  if (selectedCluster) {
+    $('resetClusterBtn').hidden = false;
+    $('clusterScope').hidden = false;
+    $('clusterScope').textContent =
+      `已按 ${selectedCluster.id.replace('cluster-', '集群 ')} 过滤（${selectedCluster.conflictCount} 处冲突）`;
+  }
+
   conflictsLayer.clearLayers();
   const list = $('conflictList');
   list.innerHTML = '';
 
-  // 按冲突类型筛选
+  // 先按选中集群过滤冲突，再按冲突类型筛选
+  let visible = result.conflicts;
+  if (selectedCluster) {
+    const idSet = new Set(selectedCluster.conflictIds);
+    visible = visible.filter((c) => idSet.has(c.id));
+  }
   const filtered = state.typeFilter === 'all'
-    ? result.conflicts
-    : result.conflicts.filter((c) => c.conflictType === state.typeFilter);
+    ? visible
+    : visible.filter((c) => c.conflictType === state.typeFilter);
 
   if (!result.conflicts.length) {
     list.innerHTML = '<em>未发现时空重叠或共享资源冲突。</em>';
     return;
   }
-  if (!filtered.length) {
-    list.innerHTML = '<em>当前类型筛选下没有冲突，请切换筛选条件。</em>';
+  if (selectedCluster && !visible.length) {
+    list.innerHTML = '<em>该集群下没有冲突。</em>';
     return;
   }
+  if (!filtered.length) {
+    list.innerHTML = '<em>当前筛选条件下没有冲突，请切换筛选条件或恢复全量视图。</em>';
+    return;
+  }
+
+  const clusterOfConflict = new Map();
+  (result.clusters || []).forEach((cl) => cl.conflictIds.forEach((cid) => clusterOfConflict.set(cid, cl)));
 
   filtered.forEach((c) => {
     const idx = result.conflicts.indexOf(c); // 保持完整结果中的编号稳定
     const typeInfo = CONFLICT_TYPES[c.conflictType] || CONFLICT_TYPES.spatial;
+    const ownerCluster = clusterOfConflict.get(c.id);
 
     // 地图高亮相交区域（纯资源冲突无空间相交，不上图）
     let geo = null;
@@ -414,6 +596,9 @@ function renderConflicts(result) {
       ? `<br>共享资源：${c.sharedResources.map((r) => `<span class="tag resource">${escapeHtml(r)}</span>`).join(' ')}`
       : '';
     const areaLine = c.geometry ? `重叠面积 ${fmtArea(c.areaM2)}` : '无空间相交（仅资源冲突）';
+    const clusterLine = ownerCluster
+      ? `<span class="tag cluster-tag" title="所属冲突协调集群">🔗 ${escapeHtml(ownerCluster.id.replace('cluster-', '集群 '))}</span>`
+      : '';
     const suggestions = c.suggestions.map((s) => `<li>${escapeHtml(s.text)}</li>`).join('');
     item.innerHTML = `
       <h3>
@@ -423,6 +608,7 @@ function renderConflicts(result) {
       <div class="stats">
         ${zoneTags}${resTags}<br>
         重叠时段：${fmtDate(c.overlapStart)} ~ ${fmtDate(c.overlapEnd)}（${c.overlapDays} 天）
+        ${clusterLine ? `<br>${clusterLine}` : ''}
       </div>
       <details>
         <summary>错峰建议（${c.suggestions.length} 条）</summary>
@@ -454,10 +640,11 @@ async function refreshAnalyses() {
     const typeInfo = a.conflictCountByType
       ? `（空间 ${a.conflictCountByType.spatial} / 资源 ${a.conflictCountByType.resource} / 空间+资源 ${a.conflictCountByType.both}）`
       : '';
+    const clusterInfo = a.clusterCount ? ` · ${a.clusterCount} 个协调集群` : '';
     li.innerHTML = `
       <span>
         <strong>${escapeHtml(a.name)}</strong>
-        <div class="meta">${new Date(a.savedAt).toLocaleString('zh-CN')} · ${a.conflictCount} 处冲突${typeInfo} · ${fmtArea(a.totalConflictAreaM2)}</div>
+        <div class="meta">${new Date(a.savedAt).toLocaleString('zh-CN')} · ${a.conflictCount} 处冲突${typeInfo}${clusterInfo} · ${fmtArea(a.totalConflictAreaM2)}</div>
       </span>`;
     const btns = document.createElement('span');
     btns.className = 'row';
@@ -469,6 +656,7 @@ async function refreshAnalyses() {
     view.onclick = async () => {
       const record = await api(`/api/analyses/${a.id}`);
       state.lastResult = record.result;
+      resetClusterView();
       renderConflicts(record.result);
     };
 
@@ -532,15 +720,25 @@ $('clearBtn').onclick = async () => {
   await api('/api/zones', { method: 'DELETE' });
   state.selectedLayers.clear();
   conflictsLayer.clearLayers();
+  criticalMarkersLayer.clearLayers();
   state.lastResult = null;
+  state.selectedClusterId = null;
   $('conflictList').innerHTML = '<em>运行分析后在此展示，按重叠面积降序排列。</em>';
   $('conflictSummary').textContent = '未运行';
+  $('clusterSummary').textContent = '未运行';
+  $('clusterList').innerHTML = '<em>运行分析后在此展示协调集群（仅含两个及以上区域的连通分量）。</em>';
+  $('resetClusterBtn').hidden = true;
+  $('clusterScope').hidden = true;
   $('typeFilter').value = 'all';
   state.typeFilter = 'all';
   await refreshZones();
 };
 
 $('analyzeBtn').onclick = runAnalysis;
+
+$('resetClusterBtn').onclick = () => {
+  if (state.lastResult) selectCluster(null);
+};
 
 $('typeFilter').onchange = (e) => {
   state.typeFilter = e.target.value;
